@@ -1,0 +1,21 @@
+import { buildApp } from "./app.js";
+import { env } from "./config/env.js";
+
+async function start() {
+  const app = await buildApp();
+
+  try {
+    await app.prisma.$connect();
+
+    await app.listen({
+      port: env.PORT,
+      host: "0.0.0.0",
+    });
+  } catch (error) {
+    app.log.error(error);
+    await app.close();
+    process.exit(1);
+  }
+}
+
+start();
