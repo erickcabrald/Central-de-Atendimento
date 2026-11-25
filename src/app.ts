@@ -7,6 +7,7 @@ import { prisma } from "./lib/prisma.js";
 
 import authRoutes from "./modules/auth/auth.routes.js";
 import userRoutes from "./modules/user/user.routes.js";
+import chatRoutes from "./modules/chat/chat.routes.js";
 
 export async function buildApp() {
   const app = Fastify({
@@ -32,6 +33,7 @@ export async function buildApp() {
 
   await app.register(authRoutes, { prefix: "/auth" });
   await app.register(userRoutes, { prefix: "/user" });
+  await app.register(chatRoutes, { prefix: "/chat" });
 
   // Tratamento global de erros
   app.setErrorHandler((error: any, request, reply) => {
