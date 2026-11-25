@@ -2,8 +2,11 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import jwt from "@fastify/jwt";
 
-import { env } from "./config/env.js";
+import { env } from "./generated/config/env.js";
 import { prisma } from "./lib/prisma.js";
+
+import authRoutes from "./modules/auth/auth.routes.js";
+import userRoutes from "./modules/user/user.routes.js";
 
 export async function buildApp() {
   const app = Fastify({
@@ -26,6 +29,9 @@ export async function buildApp() {
   await app.register(jwt, {
     secret: env.JWT_SECRET,
   });
+
+  await app.register(authRoutes, { prefix: "/auth" });
+  await app.register(userRoutes, { prefix: "/user" });
 
   // Tratamento global de erros
   app.setErrorHandler((error: any, request, reply) => {
