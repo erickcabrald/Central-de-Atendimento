@@ -21,6 +21,33 @@ model User {
   RA        String?  @unique
   role      UserRole @default(ALUNO)
 
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  conversations Conversation[]
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+}
+
+model Conversation {
+  id       String    @id @default(uuid()) @db.Uuid
+  titulo   String?
+  userId   String    @db.Uuid
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages Message[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model Message {
+  id             String       @id @default(uuid()) @db.Uuid
+  content        String       @db.Text
+  role           MessageRole
+  conversationId String       @db.Uuid
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
 }
