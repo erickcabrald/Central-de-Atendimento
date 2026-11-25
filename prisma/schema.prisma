@@ -24,6 +24,7 @@ model User {
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   conversations Conversation[]
+  requerimentos Requerimento[]
 }
 
 enum MessageRole {
@@ -50,4 +51,32 @@ model Message {
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
+}
+
+enum RequerimentoStatus {
+  ABERTO
+  EM_ANALISE
+  DEFERIDO
+  INDEFERIDO
+}
+
+enum RequerimentoTipo {
+  RECEBIMENTO_PROVA
+  APROVEITAMENTO_ESTUDOS
+  TRANCAMENTO
+  OUTRO
+}
+
+model Requerimento {
+  id        String             @id @default(uuid()) @db.Uuid
+  protocolo String             @unique
+  tipo      RequerimentoTipo
+  descricao String             @db.Text
+  status    RequerimentoStatus @default(ABERTO)
+
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
