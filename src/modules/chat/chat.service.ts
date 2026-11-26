@@ -1,9 +1,76 @@
+import { randomUUID } from "node:crypto";
 import type { PrismaClient } from "../../generated/prisma/client.js";
 
 import { GeminiService } from "./gemini.service.js";
 import type { SendMessageInput } from "./chat.schema.js";
 
 import { KnowledgeBaseService } from "../knowledge-base/knowledge-base.service.js";
+
+const TIPOS_REQUERIMENTO = [
+  "RECEBIMENTO_PROVA",
+  "APROVEITAMENTO_ESTUDOS",
+  "TRANCAMENTO",
+  "OUTRO",
+] as const;
+
+type RequerimentoTipoValido = (typeof TIPOS_REQUERIMENTO)[number];
+
+function isTipoRequerimento(value: unknown): value is RequerimentoTipoValido {
+  return (
+    typeof value === "string" &&
+    TIPOS_REQUERIMENTO.includes(value as RequerimentoTipoValido)
+  );
+}
+
+function normalizeConfirmationMessage(message: string): string {
+  return message
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[,.!?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isExplicitConfirmation(message: string): boolean {
+  const normalized = normalizeConfirmationMessage(message);
+
+  return [
+    "sim",
+    "s",
+    "confirmo",
+    "confirmado",
+    "pode confirmar",
+    "sim pode confirmar",
+    "pode criar",
+    "sim pode criar",
+    "pode registrar",
+    "sim pode registrar",
+    "desejo confirmar",
+    "quero confirmar",
+    "pode prosseguir",
+    "isso mesmo",
+    "esta correto",
+    "esta certo",
+  ].includes(normalized);
+}
+
+function isExplicitCancellation(message: string): boolean {
+  const normalized = normalizeConfirmationMessage(message);
+
+  return [
+    "nao",
+    "cancela",
+    "cancelar",
+    "quero cancelar",
+    "nao quero",
+    "nao pode confirmar",
+    "desisto",
+    "pode cancelar",
+    "nao pode criar",
+  ].includes(normalized);
+}
 
 export class ChatService {
   private geminiService = new GeminiService();
@@ -12,13 +79,13 @@ export class ChatService {
   constructor(private prisma: PrismaClient) {}
 
   async sendMessage(userId: string, data: SendMessageInput) {
-    let conversationId = data.conversationId;
+    let conversationId: string;
 
-    // Verifica se a conversa pertence ao usuário
-    if (conversationId) {
+    // Verifica se a conversa pertence ao usuário.
+    if (data.conversationId) {
       const conversation = await this.prisma.conversation.findFirst({
         where: {
-          id: conversationId,
+          id: data.conversationId,
           userId,
         },
       });
@@ -26,34 +93,46 @@ export class ChatService {
       if (!conversation) {
         return null;
       }
-    }
 
-    // Recupera as 20 mensagens mais recentes
-    let history: {
-      role: "user" | "model";
-      parts: { text: string }[];
-    }[] = [];
-
-    if (conversationId) {
-      const messages = await this.prisma.message.findMany({
-        where: { conversationId },
-        orderBy: { createdAt: "desc" },
-        take: 20,
+      conversationId = conversation.id;
+    } else {
+      // Cria a conversa antes do Gemini para que as ferramentas
+      // possam guardar informações nela durante a execução.
+      const conversation = await this.prisma.conversation.create({
+        data: {
+          userId,
+          titulo: data.message.slice(0, 60),
+        },
       });
 
-      history = messages.reverse().map((message) => ({
-        role: message.role === "USER" ? "user" : "model",
-        parts: [{ text: message.content }],
-      }));
+      conversationId = conversation.id;
     }
 
-    // Adiciona a mensagem atual
+    // Recupera as 20 mensagens mais recentes.
+    const messages = await this.prisma.message.findMany({
+      where: { conversationId },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+    });
+
+    const history = messages.reverse().map((message) => ({
+      role: message.role === "USER" ? ("user" as const) : ("model" as const),
+      parts: [{ text: message.content }],
+    }));
+
+    // Guarda a última resposta do assistente para validar
+    // se o aluno realmente estava respondendo a uma confirmação.
+    const lastAssistantMessage = [...history]
+      .reverse()
+      .find((message) => message.role === "model")?.parts[0]?.text;
+
+    // Adiciona a mensagem atual.
     history.push({
       role: "user",
       parts: [{ text: data.message }],
     });
 
-    // Pesquisa na base de conhecimento
+    // Pesquisa na Base de Conhecimento.
     const knowledgeResults = this.knowledgeBase.search(data.message);
 
     const knowledgeContext =
@@ -65,21 +144,17 @@ export class ChatService {
             .join("\n\n")
         : "Nenhuma informação relevante foi encontrada na base de conhecimento.";
 
-    // Solicita uma resposta ao Gemini e disponibiliza as ferramentas
+    // Solicita resposta ao Gemini e disponibiliza as ferramentas.
     const response = await this.geminiService.generateResponse(
       history,
       knowledgeContext,
 
       async (functionName, args) => {
-        // 1. Listar requerimentos do aluno
+        // 1. Listar requerimentos do aluno.
         if (functionName === "listar_meus_requerimentos") {
           const requerimentos = await this.prisma.requerimento.findMany({
-            where: {
-              userId,
-            },
-            orderBy: {
-              createdAt: "desc",
-            },
+            where: { userId },
+            orderBy: { createdAt: "desc" },
             take: 10,
             select: {
               protocolo: true,
@@ -99,11 +174,10 @@ export class ChatService {
           };
         }
 
-        // 2. Consultar requerimento pelo protocolo
+        // 2. Consultar requerimento pelo protocolo.
         if (functionName === "consultar_status_requerimento") {
           const protocolo = args.protocolo;
 
-          // Valida o protocolo recebido do Gemini
           if (
             typeof protocolo !== "string" ||
             protocolo.trim().length < 5 ||
@@ -148,23 +222,219 @@ export class ChatService {
           };
         }
 
+        // 3. Preparar requerimento, sem criar o registro definitivo.
+        if (functionName === "preparar_requerimento") {
+          const tipo = args.tipo;
+          const descricao = args.descricao;
+
+          if (!isTipoRequerimento(tipo)) {
+            return {
+              sucesso: false,
+              mensagem: "O tipo de requerimento informado é inválido.",
+            };
+          }
+
+          if (
+            typeof descricao !== "string" ||
+            descricao.trim().length < 5 ||
+            descricao.trim().length > 3000
+          ) {
+            return {
+              sucesso: false,
+              mensagem: "A descrição deve ter entre 5 e 3000 caracteres.",
+            };
+          }
+
+          const conversation = await this.prisma.conversation.findFirst({
+            where: {
+              id: conversationId,
+              userId,
+            },
+            select: {
+              requerimentoPendenteTipo: true,
+              requerimentoPendenteDescricao: true,
+            },
+          });
+
+          if (!conversation) {
+            return {
+              sucesso: false,
+              mensagem: "Não foi possível localizar a conversa.",
+            };
+          }
+
+          if (
+            conversation.requerimentoPendenteTipo ||
+            conversation.requerimentoPendenteDescricao
+          ) {
+            return {
+              sucesso: false,
+              mensagem:
+                "Já existe um requerimento aguardando confirmação nesta conversa. Peça ao aluno para confirmar ou cancelar antes de preparar outro.",
+            };
+          }
+
+          await this.prisma.conversation.update({
+            where: { id: conversationId },
+            data: {
+              requerimentoPendenteTipo: tipo,
+              requerimentoPendenteDescricao: descricao.trim(),
+            },
+          });
+
+          return {
+            sucesso: true,
+            preparado: true,
+            tipo,
+            descricao: descricao.trim(),
+            mensagem:
+              "Requerimento preparado, mas ainda não criado. Apresente o resumo ao aluno e solicite confirmação explícita.",
+          };
+        }
+
+        // 4. Confirmar e criar o requerimento.
+        if (functionName === "confirmar_requerimento") {
+          const conversation = await this.prisma.conversation.findFirst({
+            where: {
+              id: conversationId,
+              userId,
+            },
+            select: {
+              requerimentoPendenteTipo: true,
+              requerimentoPendenteDescricao: true,
+            },
+          });
+
+          if (
+            !conversation?.requerimentoPendenteTipo ||
+            !conversation.requerimentoPendenteDescricao
+          ) {
+            return {
+              sucesso: false,
+              criado: false,
+              mensagem: "Não existe requerimento pendente para confirmar.",
+            };
+          }
+
+          const assistantAskedConfirmation =
+            typeof lastAssistantMessage === "string" &&
+            /confirm|deseja registrar|deseja criar/i.test(lastAssistantMessage);
+
+          if (
+            !assistantAskedConfirmation ||
+            !isExplicitConfirmation(data.message)
+          ) {
+            return {
+              sucesso: false,
+              criado: false,
+              mensagem:
+                "A confirmação não foi identificada. O requerimento continua pendente. Solicite uma confirmação explícita ao aluno.",
+            };
+          }
+
+          const protocolo = `REQ-${new Date().getFullYear()}-${randomUUID()
+            .slice(0, 8)
+            .toUpperCase()}`;
+
+          const requerimento = await this.prisma.$transaction(
+            async (transaction) => {
+              const created = await transaction.requerimento.create({
+                data: {
+                  protocolo,
+                  tipo: conversation.requerimentoPendenteTipo!,
+                  descricao: conversation.requerimentoPendenteDescricao!,
+                  userId,
+                },
+              });
+
+              await transaction.conversation.update({
+                where: { id: conversationId },
+                data: {
+                  requerimentoPendenteTipo: null,
+                  requerimentoPendenteDescricao: null,
+                },
+              });
+
+              return created;
+            },
+          );
+
+          return {
+            sucesso: true,
+            criado: true,
+            requerimento: {
+              protocolo: requerimento.protocolo,
+              tipo: requerimento.tipo,
+              descricao: requerimento.descricao,
+              status: requerimento.status,
+              createdAt: requerimento.createdAt.toISOString(),
+            },
+            mensagem:
+              "Requerimento criado com sucesso. Informe ao aluno o protocolo retornado.",
+          };
+        }
+
+        // 5. Cancelar requerimento pendente.
+        if (functionName === "cancelar_requerimento") {
+          const conversation = await this.prisma.conversation.findFirst({
+            where: {
+              id: conversationId,
+              userId,
+            },
+            select: {
+              requerimentoPendenteTipo: true,
+              requerimentoPendenteDescricao: true,
+            },
+          });
+
+          if (
+            !conversation?.requerimentoPendenteTipo ||
+            !conversation.requerimentoPendenteDescricao
+          ) {
+            return {
+              sucesso: false,
+              cancelado: false,
+              mensagem: "Não existe requerimento pendente para cancelar.",
+            };
+          }
+
+          const assistantAskedConfirmation =
+            typeof lastAssistantMessage === "string" &&
+            /confirm|deseja registrar|deseja criar/i.test(lastAssistantMessage);
+
+          if (
+            !assistantAskedConfirmation ||
+            !isExplicitCancellation(data.message)
+          ) {
+            return {
+              sucesso: false,
+              cancelado: false,
+              mensagem:
+                "O cancelamento não foi identificado. O requerimento continua pendente.",
+            };
+          }
+
+          await this.prisma.conversation.update({
+            where: { id: conversationId },
+            data: {
+              requerimentoPendenteTipo: null,
+              requerimentoPendenteDescricao: null,
+            },
+          });
+
+          return {
+            sucesso: true,
+            cancelado: true,
+            mensagem:
+              "A solicitação pendente foi cancelada e nenhum requerimento foi criado.",
+          };
+        }
+
         throw new Error(`Ferramenta não permitida: ${functionName}`);
       },
     );
 
-    // Cria uma conversa se for a primeira mensagem
-    if (!conversationId) {
-      const conversation = await this.prisma.conversation.create({
-        data: {
-          userId,
-          titulo: data.message.slice(0, 60),
-        },
-      });
-
-      conversationId = conversation.id;
-    }
-
-    // Salva as mensagens e atualiza a conversa
+    // Salva as mensagens e atualiza a conversa.
     await this.prisma.$transaction([
       this.prisma.message.create({
         data: {

@@ -40,6 +40,10 @@ model Conversation {
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   messages Message[]
 
+  // Requerimento aguardando confirmação
+  requerimentoPendenteTipo      RequerimentoTipo?
+  requerimentoPendenteDescricao String?           @db.Text
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
