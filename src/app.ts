@@ -9,6 +9,7 @@ import authRoutes from "./modules/auth/auth.routes.js";
 import userRoutes from "./modules/user/user.routes.js";
 import chatRoutes from "./modules/chat/chat.routes.js";
 import requerimentoRoutes from "./modules/requerimento/requerimento.routes.js";
+import ocorrenciaRoutes from "./modules/ocorrencia/ocorrencia.routes.js";
 
 export async function buildApp() {
   const app = Fastify({
@@ -37,6 +38,9 @@ export async function buildApp() {
   await app.register(chatRoutes, { prefix: "/chat" });
   await app.register(requerimentoRoutes, {
     prefix: "/requerimentos",
+  });
+  await app.register(ocorrenciaRoutes, {
+    prefix: "/ocorrencias",
   });
 
   // Tratamento global de erros
