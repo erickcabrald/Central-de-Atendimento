@@ -10,6 +10,7 @@ import userRoutes from "./modules/user/user.routes.js";
 import chatRoutes from "./modules/chat/chat.routes.js";
 import requerimentoRoutes from "./modules/requerimento/requerimento.routes.js";
 import ocorrenciaRoutes from "./modules/ocorrencia/ocorrencia.routes.js";
+import knowledgeBaseRoutes from "./modules/knowledge-base/knowledge-base.routes.js";
 
 export async function buildApp() {
   const app = Fastify({
@@ -36,12 +37,9 @@ export async function buildApp() {
   await app.register(authRoutes, { prefix: "/auth" });
   await app.register(userRoutes, { prefix: "/user" });
   await app.register(chatRoutes, { prefix: "/chat" });
-  await app.register(requerimentoRoutes, {
-    prefix: "/requerimentos",
-  });
-  await app.register(ocorrenciaRoutes, {
-    prefix: "/ocorrencias",
-  });
+  await app.register(requerimentoRoutes, { prefix: "/requerimentos" });
+  await app.register(ocorrenciaRoutes, { prefix: "/ocorrencias" });
+  await app.register(knowledgeBaseRoutes, { prefix: "/knowledge-base" });
 
   // Tratamento global de erros
   app.setErrorHandler((error: any, request, reply) => {
