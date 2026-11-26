@@ -1,51 +1,118 @@
-import { knowledgeBase } from "./knowledge-base.data.js";
+import { prisma } from "../../lib/prisma.js";
+import { GeminiService } from "../chat/gemini.service.js";
+import { splitIntoChunks } from "./knowledge-base.utils.js";
+
+type KnowledgeSearchResult = {
+  id: string;
+  title: string;
+  content: string;
+  similarity: number;
+};
 
 export class KnowledgeBaseService {
-  private normalize(text: string) {
-    return text
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .toLowerCase();
+  private geminiService = new GeminiService();
+
+  /**
+   * Busca os trechos mais relevantes usando similaridade vetorial.
+   */
+  async search(query: string): Promise<KnowledgeSearchResult[]> {
+    if (!query.trim()) {
+      return [];
+    }
+
+    // Gera o embedding da pergunta do aluno.
+    const embedding = await this.geminiService.generateEmbedding(
+      query,
+      "RETRIEVAL_QUERY",
+    );
+
+    const vector = `[${embedding.join(",")}]`;
+
+    // Busca os três chunks semanticamente mais próximos.
+    const results = await prisma.$queryRaw<KnowledgeSearchResult[]>`
+      SELECT
+        kc."id",
+        kd."title",
+        kc."content",
+        1 - (kc."embedding" <=> ${vector}::extensions.vector) AS similarity
+      FROM "KnowledgeChunk" kc
+      INNER JOIN "KnowledgeDocument" kd
+        ON kd."id" = kc."documentId"
+      WHERE
+        kc."embedding" IS NOT NULL
+        AND kd."status" = 'PROCESSED'
+      ORDER BY kc."embedding" <=> ${vector}::extensions.vector
+      LIMIT 3
+    `;
+
+    return results;
   }
 
-  search(query: string) {
-    const normalizedQuery = this.normalize(query);
+  /**
+   * Processa um documento de texto, divide em chunks
+   * e salva seus embeddings no banco.
+   */
+  async processTextDocument(title: string, content: string) {
+    if (!title.trim()) {
+      throw new Error("O título do documento é obrigatório.");
+    }
 
-    const words = normalizedQuery
-      .split(/\s+/)
-      .filter((word) => word.length > 2);
+    const chunks = splitIntoChunks(content);
 
-    const results = knowledgeBase
-      .map((item) => {
-        const title = this.normalize(item.title);
-        const content = this.normalize(item.content);
-        const keywords = item.keywords.map((keyword) =>
-          this.normalize(keyword),
+    if (chunks.length === 0) {
+      throw new Error("O conteúdo do documento está vazio.");
+    }
+
+    const document = await prisma.knowledgeDocument.create({
+      data: {
+        title,
+        type: "TEXT",
+        status: "PROCESSING",
+      },
+    });
+
+    try {
+      for (let index = 0; index < chunks.length; index++) {
+        const chunkContent = chunks[index];
+
+        const embedding = await this.geminiService.generateEmbedding(
+          chunkContent,
+          "RETRIEVAL_DOCUMENT",
         );
 
-        let score = 0;
+        const chunk = await prisma.knowledgeChunk.create({
+          data: {
+            content: chunkContent,
+            chunkIndex: index,
+            documentId: document.id,
+          },
+        });
 
-        for (const word of words) {
-          if (title.includes(word)) score += 3;
-          if (keywords.some((keyword) => keyword.includes(word))) {
-            score += 3;
-          }
-          if (content.includes(word)) score += 1;
-        }
+        const vector = `[${embedding.join(",")}]`;
 
-        if (title.includes(normalizedQuery)) {
-          score += 3;
-        }
+        await prisma.$executeRaw`
+          UPDATE "KnowledgeChunk"
+          SET "embedding" = ${vector}::extensions.vector
+          WHERE "id" = ${chunk.id}::uuid
+        `;
+      }
 
-        return {
-          item,
-          score,
-        };
-      })
-      .filter((result) => result.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 3);
+      const updatedDocument = await prisma.knowledgeDocument.update({
+        where: { id: document.id },
+        data: { status: "PROCESSED" },
+      });
 
-    return results.map((result) => result.item);
+      return {
+        document: updatedDocument,
+        chunksProcessed: chunks.length,
+      };
+    } catch (error) {
+      await prisma.knowledgeDocument.update({
+        where: { id: document.id },
+        data: { status: "FAILED" },
+      });
+
+      throw error;
+    }
   }
 }

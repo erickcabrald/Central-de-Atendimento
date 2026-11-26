@@ -13,6 +13,32 @@ const TIPOS_REQUERIMENTO = [
   "OUTRO",
 ] as const;
 
+const TIPOS_OCORRENCIA = [
+  "ACADEMICO",
+  "ATENDIMENTO",
+  "INFRAESTRUTURA",
+  "SISTEMA",
+  "OUTRO",
+] as const;
+
+type OcorrenciaTipoValido = (typeof TIPOS_OCORRENCIA)[number];
+
+function isTipoOcorrencia(value: unknown): value is OcorrenciaTipoValido {
+  return (
+    typeof value === "string" &&
+    TIPOS_OCORRENCIA.includes(value as OcorrenciaTipoValido)
+  );
+}
+
+function isUuid(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      value,
+    )
+  );
+}
+
 type RequerimentoTipoValido = (typeof TIPOS_REQUERIMENTO)[number];
 
 function isTipoRequerimento(value: unknown): value is RequerimentoTipoValido {
@@ -133,15 +159,22 @@ export class ChatService {
     });
 
     // Pesquisa na Base de Conhecimento.
-    const knowledgeResults = this.knowledgeBase.search(data.message);
+
+    // Pesquisa na Base de Conhecimento usando busca semântica.
+    const knowledgeResults = await this.knowledgeBase.search(data.message);
 
     const knowledgeContext =
       knowledgeResults.length > 0
         ? knowledgeResults
-            .map((item) => {
-              return `Título: ${item.title}\nInformação: ${item.content}`;
+            .map((item, index) => {
+              return `
+Trecho ${index + 1}
+Documento: ${item.title}
+Relevância: ${(item.similarity * 100).toFixed(2)}%
+Informação: ${item.content}
+`;
             })
-            .join("\n\n")
+            .join("\n")
         : "Nenhuma informação relevante foi encontrada na base de conhecimento.";
 
     // Solicita resposta ao Gemini e disponibiliza as ferramentas.
@@ -427,6 +460,138 @@ export class ChatService {
             cancelado: true,
             mensagem:
               "A solicitação pendente foi cancelada e nenhum requerimento foi criado.",
+          };
+        }
+
+        // 6. Registrar ocorrência.
+        if (functionName === "registrar_ocorrencia") {
+          const titulo = args.titulo;
+          const descricao = args.descricao;
+          const tipo = args.tipo;
+
+          if (
+            typeof titulo !== "string" ||
+            titulo.trim().length < 5 ||
+            titulo.trim().length > 100
+          ) {
+            return {
+              sucesso: false,
+              mensagem: "O título deve ter entre 5 e 100 caracteres.",
+            };
+          }
+
+          if (
+            typeof descricao !== "string" ||
+            descricao.trim().length < 10 ||
+            descricao.trim().length > 2000
+          ) {
+            return {
+              sucesso: false,
+              mensagem: "A descrição deve ter entre 10 e 2000 caracteres.",
+            };
+          }
+
+          if (!isTipoOcorrencia(tipo)) {
+            return {
+              sucesso: false,
+              mensagem: "O tipo de ocorrência informado é inválido.",
+            };
+          }
+
+          const ocorrencia = await this.prisma.ocorrencia.create({
+            data: {
+              titulo: titulo.trim(),
+              descricao: descricao.trim(),
+              tipo,
+              userId,
+            },
+          });
+
+          return {
+            sucesso: true,
+            registrada: true,
+            ocorrencia: {
+              id: ocorrencia.id,
+              titulo: ocorrencia.titulo,
+              descricao: ocorrencia.descricao,
+              tipo: ocorrencia.tipo,
+              status: ocorrencia.status,
+              createdAt: ocorrencia.createdAt.toISOString(),
+            },
+            mensagem: "Ocorrência registrada com sucesso.",
+          };
+        }
+
+        // 7. Listar ocorrências do aluno autenticado.
+        if (functionName === "listar_minhas_ocorrencias") {
+          const ocorrencias = await this.prisma.ocorrencia.findMany({
+            where: { userId },
+            orderBy: {
+              createdAt: "desc",
+            },
+            take: 10,
+            select: {
+              id: true,
+              titulo: true,
+              descricao: true,
+              tipo: true,
+              status: true,
+              createdAt: true,
+              updatedAt: true,
+            },
+          });
+
+          return {
+            total: ocorrencias.length,
+            ocorrencias: ocorrencias.map((item) => ({
+              ...item,
+              createdAt: item.createdAt.toISOString(),
+              updatedAt: item.updatedAt.toISOString(),
+            })),
+          };
+        }
+
+        // 8. Consultar ocorrência pelo ID.
+        if (functionName === "consultar_ocorrencia") {
+          const id = args.id;
+
+          if (!isUuid(id)) {
+            return {
+              encontrada: false,
+              mensagem: "O ID da ocorrência informado é inválido.",
+            };
+          }
+
+          const ocorrencia = await this.prisma.ocorrencia.findFirst({
+            where: {
+              id,
+              userId,
+            },
+            select: {
+              id: true,
+              titulo: true,
+              descricao: true,
+              tipo: true,
+              status: true,
+              createdAt: true,
+              updatedAt: true,
+            },
+          });
+
+          if (!ocorrencia) {
+            return {
+              encontrada: false,
+              mensagem: "Nenhuma ocorrência foi encontrada com esse ID.",
+            };
+          }
+
+          return {
+            encontrada: true,
+            ocorrencia: {
+              ...ocorrencia,
+              createdAt: ocorrencia.createdAt.toISOString(),
+              updatedAt: ocorrencia.updatedAt.toISOString(),
+            },
           };
         }
 

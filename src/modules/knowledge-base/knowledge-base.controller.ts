@@ -10,7 +10,7 @@ export class KnowledgeBaseController {
     this.service = new KnowledgeBaseService();
   }
 
-  search(
+  async search(
     request: FastifyRequest<{ Querystring: { q: string } }>,
     reply: FastifyReply,
   ) {
@@ -23,7 +23,7 @@ export class KnowledgeBaseController {
       });
     }
 
-    const results = this.service.search(result.data.q);
+    const results = await this.service.search(result.data.q);
 
     return reply.send({
       query: result.data.q,

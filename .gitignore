@@ -14,5 +14,5 @@ coverage/
 .DS_Store
 
 src/generated/
-
+src/scripts/
 prisma/migrations/

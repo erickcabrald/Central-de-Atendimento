@@ -17,6 +17,10 @@ const envSchema = z.object({
   FRONTEND_URL: z.string().url(),
 
   GEMINI_API_KEY: z.string().min(1),
+
+  SUPABASE_URL: z.string().url(),
+
+  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
 });
 
 export const env = envSchema.parse(process.env);

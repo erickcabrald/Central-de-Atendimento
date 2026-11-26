@@ -12,50 +12,9 @@ enum UserRole {
   ADMIN
 }
 
-model User {
-  id        String   @id @default(uuid()) @db.Uuid
-  nome      String
-  email     String   @unique
-  senha     String
-  matricula String?  @unique
-  RA        String?  @unique
-  role      UserRole @default(ALUNO)
-
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  conversations Conversation[]
-  requerimentos Requerimento[]
-  ocorrencias   Ocorrencia[]
-}
-
 enum MessageRole {
   USER
   ASSISTANT
-}
-
-model Conversation {
-  id       String    @id @default(uuid()) @db.Uuid
-  titulo   String?
-  userId   String    @db.Uuid
-  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  messages Message[]
-
-  // Requerimento aguardando confirmação
-  requerimentoPendenteTipo      RequerimentoTipo?
-  requerimentoPendenteDescricao String?           @db.Text
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-model Message {
-  id             String       @id @default(uuid()) @db.Uuid
-  content        String       @db.Text
-  role           MessageRole
-  conversationId String       @db.Uuid
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-
-  createdAt DateTime @default(now())
 }
 
 enum RequerimentoStatus {
@@ -72,20 +31,6 @@ enum RequerimentoTipo {
   OUTRO
 }
 
-model Requerimento {
-  id        String             @id @default(uuid()) @db.Uuid
-  protocolo String             @unique
-  tipo      RequerimentoTipo
-  descricao String             @db.Text
-  status    RequerimentoStatus @default(ABERTO)
-
-  userId String @db.Uuid
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
 enum OcorrenciaTipo {
   ACADEMICO
   ATENDIMENTO
@@ -100,6 +45,78 @@ enum OcorrenciaStatus {
   RESOLVIDA
 }
 
+enum KnowledgeDocumentType {
+  PDF
+  TEXT
+  LINK
+  FAQ
+}
+
+enum KnowledgeDocumentStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  FAILED
+}
+
+model User {
+  id        String   @id @default(uuid()) @db.Uuid
+  nome      String
+  email     String   @unique
+  senha     String
+  matricula String?  @unique
+  RA        String?  @unique
+  role      UserRole @default(ALUNO)
+
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  conversations Conversation[]
+  requerimentos Requerimento[]
+  ocorrencias   Ocorrencia[]
+}
+
+model Conversation {
+  id       String    @id @default(uuid()) @db.Uuid
+  titulo   String?
+  userId   String    @db.Uuid
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  requerimentoPendenteTipo      RequerimentoTipo?
+  requerimentoPendenteDescricao String?           @db.Text
+
+  ocorrenciaPendenteTitulo    String?
+  ocorrenciaPendenteDescricao String?         @db.Text
+  ocorrenciaPendenteTipo      OcorrenciaTipo?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Message {
+  id             String       @id @default(uuid()) @db.Uuid
+  content        String       @db.Text
+  role           MessageRole
+  conversationId String       @db.Uuid
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+}
+
+model Requerimento {
+  id        String             @id @default(uuid()) @db.Uuid
+  protocolo String             @unique
+  tipo      RequerimentoTipo
+  descricao String             @db.Text
+  status    RequerimentoStatus @default(ABERTO)
+
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 model Ocorrencia {
   id        String           @id @default(uuid()) @db.Uuid
   titulo    String
@@ -112,4 +129,44 @@ model Ocorrencia {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model KnowledgeDocument {
+  id          String                  @id @default(uuid()) @db.Uuid
+  title       String
+  description String?                 @db.Text
+  type        KnowledgeDocumentType
+  status      KnowledgeDocumentStatus @default(PENDING)
+
+  sourceUrl    String? @db.Text
+  storagePath  String? @db.Text
+  originalName String?
+  mimeType     String?
+
+  chunks KnowledgeChunk[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([type, status])
+}
+
+model KnowledgeChunk {
+  id         String @id @default(uuid()) @db.Uuid
+  content    String @db.Text
+  chunkIndex Int
+
+  page     Int?
+  metadata Json?
+
+  // Embedding gerado pelo Gemini
+  embedding Unsupported("vector(768)")?
+
+  documentId String            @db.Uuid
+  document   KnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([documentId, chunkIndex])
+  @@index([documentId])
 }

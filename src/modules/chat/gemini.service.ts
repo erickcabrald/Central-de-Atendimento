@@ -51,6 +51,18 @@ Sobre a criação de requerimentos:
 - Apresente o protocolo exatamente como retornado pela ferramenta.
 - Nunca invente um protocolo.
 - Se já existir uma solicitação pendente, não tente preparar outra. Oriente o aluno a confirmar ou cancelar a anterior.
+
+Sobre as ocorrências:
+- Quando o aluno perguntar sobre suas ocorrências, utilize listar_minhas_ocorrencias.
+- Quando o aluno quiser consultar uma ocorrência específica, utilize consultar_ocorrencia.
+- Quando o aluno solicitar explicitamente o registro de uma ocorrência, obtenha título, descrição e tipo.
+- Os tipos permitidos são ACADEMICO, ATENDIMENTO, INFRAESTRUTURA, SISTEMA e OUTRO.
+- Se faltar alguma informação necessária, pergunte antes de registrar.
+- Utilize registrar_ocorrencia somente quando o aluno solicitar explicitamente o registro e todos os dados estiverem disponíveis.
+- Nunca invente IDs, ocorrências ou status.
+- Não peça ao aluno seu ID de usuário.
+- Só informe que uma ocorrência foi registrada quando a ferramenta retornar sucesso verdadeiro.
+- Nunca altere o status de uma ocorrência pelo chatbot. Essa ação é exclusiva dos administradores.
 `;
 
 type ChatHistory = {
@@ -130,6 +142,53 @@ export class GeminiService {
             parameters: {
               type: Type.OBJECT,
               properties: {},
+            },
+          },
+          {
+            name: "registrar_ocorrencia",
+            description:
+              "Registra uma ocorrência solicitada explicitamente pelo aluno autenticado.",
+            parameters: {
+              type: Type.OBJECT,
+              properties: {
+                titulo: {
+                  type: Type.STRING,
+                  description: "Título curto da ocorrência.",
+                },
+                descricao: {
+                  type: Type.STRING,
+                  description: "Descrição detalhada do problema.",
+                },
+                tipo: {
+                  type: Type.STRING,
+                  description:
+                    "Tipo: ACADEMICO, ATENDIMENTO, INFRAESTRUTURA, SISTEMA ou OUTRO.",
+                },
+              },
+              required: ["titulo", "descricao", "tipo"],
+            },
+          },
+          {
+            name: "listar_minhas_ocorrencias",
+            description: "Lista as ocorrências do aluno autenticado.",
+            parameters: {
+              type: Type.OBJECT,
+              properties: {},
+            },
+          },
+          {
+            name: "consultar_ocorrencia",
+            description:
+              "Consulta os detalhes de uma ocorrência específica pelo ID.",
+            parameters: {
+              type: Type.OBJECT,
+              properties: {
+                id: {
+                  type: Type.STRING,
+                  description: "ID da ocorrência que será consultada.",
+                },
+              },
+              required: ["id"],
             },
           },
         ],
@@ -216,5 +275,26 @@ REGRAS SOBRE A BASE DE CONHECIMENTO:
     }
 
     return finalResponse.text;
+  }
+  async generateEmbedding(
+    content: string,
+    taskType: "RETRIEVAL_DOCUMENT" | "RETRIEVAL_QUERY",
+  ): Promise<number[]> {
+    const response = await ai.models.embedContent({
+      model: "gemini-embedding-001",
+      contents: content,
+      config: {
+        taskType,
+        outputDimensionality: 768,
+      },
+    });
+
+    const embedding = response.embeddings?.[0]?.values;
+
+    if (!embedding || embedding.length !== 768) {
+      throw new Error("Não foi possível gerar o embedding do conteúdo.");
+    }
+
+    return embedding;
   }
 }
