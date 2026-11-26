@@ -25,6 +25,7 @@ model User {
   updatedAt     DateTime       @updatedAt
   conversations Conversation[]
   requerimentos Requerimento[]
+  ocorrencias   Ocorrencia[]
 }
 
 enum MessageRole {
@@ -73,6 +74,34 @@ model Requerimento {
   tipo      RequerimentoTipo
   descricao String             @db.Text
   status    RequerimentoStatus @default(ABERTO)
+
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum OcorrenciaTipo {
+  ACADEMICO
+  ATENDIMENTO
+  INFRAESTRUTURA
+  SISTEMA
+  OUTRO
+}
+
+enum OcorrenciaStatus {
+  ABERTA
+  EM_ANDAMENTO
+  RESOLVIDA
+}
+
+model Ocorrencia {
+  id        String           @id @default(uuid()) @db.Uuid
+  titulo    String
+  descricao String           @db.Text
+  tipo      OcorrenciaTipo
+  status    OcorrenciaStatus @default(ABERTA)
 
   userId String @db.Uuid
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
